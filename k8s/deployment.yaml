@@ -20,7 +20,7 @@ spec:
       #   - name: acr-pull-secret
       containers:
         - name: hello-world
-          image: atulkamble2.azurecr.io/cloudnautic/hello-world:v1
+          image: atulkamble2.azurecr.io/cloudnautic/hello-world:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
