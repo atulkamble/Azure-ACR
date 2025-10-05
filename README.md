@@ -147,273 +147,188 @@ You should see your image listed with its tag.
 | Push Image        | `docker push <registry>/<repo>/<image>`       |
 
 ---
-Awesome—here’s the **AKS deployment extension** you can append to your doc so the flow is **build → push → deploy**. It covers **two secure ways** to let AKS pull from ACR:
-
-* **Recommended:** Attach ACR to AKS (managed identity; no imagePullSecrets needed)
-* **Alternative:** Use an **imagePullSecret** (docker-registry secret)
+Here’s a clean, well-documented version of your **AKS + ACR Deployment Guide** — formatted like a professional step-by-step README.
 
 ---
 
-# 🚀 Deploy to AKS from ACR
+# ☁️ **AKS + ACR Deployment Guide**
 
-## 📋 Prerequisites
+This guide walks through **creating an Azure Kubernetes Service (AKS)** cluster, connecting it to **Azure Container Registry (ACR)**, and deploying your application using Kubernetes manifests.
 
-* ACR with your image pushed (e.g., `atulkamble2.azurecr.io/cloudnautic/hello-world:v1`)
-* Azure CLI logged in: `az login`
-* `kubectl` installed (`az aks install-cli` if needed)
+---
 
-> Tip: Tag explicitly before pushing so you know what you’re deploying:
+## 🔧 **1. Create Resource Group**
 
 ```bash
-cd docker-hello-world
-sudo docker build -t atulkamble2.azurecr.io/cloudnautic/hello-world:v1 .
-sudo docker push atulkamble2.azurecr.io/cloudnautic/hello-world:v1
+az group create --name devops --location eastus
 ```
 
 ---
 
-## 1) Create AKS Cluster
+## 🚀 **2. Create AKS Cluster**
+
+You can create a simple cluster:
 
 ```bash
-# Vars
-RG=rg-aks-cloudnautic
-LOC=eastus
-AKS=aks-cloudnautic
-ACR=atulkamble2    # registry name only (no .azurecr.io)
+az aks create --resource-group devops --name mycluster --generate-ssh-keys
+```
 
-# Resource Group
-az group create -n $RG -l $LOC
+Or create a **customized cluster** with monitoring enabled:
 
-# AKS cluster (basic, 1 node; adjust as needed)
+```bash
 az aks create \
-  -g $RG -n $AKS \
+  --resource-group devops \
+  --name mycluster \
   --node-count 1 \
-  --node-vm-size Standard_B2s \
-  --enable-managed-identity
+  --enable-addons monitoring \
+  --generate-ssh-keys
+```
 
-# Kubeconfig
-az aks get-credentials -g $RG -n $AKS
+---
+
+## ⚙️ **3. Install kubectl**
+
+```bash
+sudo apt update -y
+sudo apt install snapd -y
+sudo snap install kubectl --classic
+```
+
+Verify:
+
+```bash
+kubectl version --client
+```
+
+---
+
+## 🔑 **4. Connect to Azure Subscription**
+
+If you manage multiple subscriptions, set the right one:
+
+```bash
+az account set --subscription 50818730-e898-4bc4-bc35-d998af53d719
+```
+
+---
+
+## 🔗 **5. Connect to AKS Cluster**
+
+```bash
+az aks get-credentials --resource-group devops --name mycluster --overwrite-existing
+```
+
+Check connection:
+
+```bash
 kubectl get nodes
 ```
 
 ---
 
-## 2) Allow AKS to pull images from ACR
+## 🧩 **6. Connect AKS to ACR**
 
-### Option A (Recommended): Attach ACR to AKS (no secrets)
-
-```bash
-az aks update -g $RG -n $AKS --attach-acr $ACR
-```
-
-After this, you can reference images like `atulkamble2.azurecr.io/...` directly—**no** `imagePullSecrets` required.
-
-### Option B (Alternative): Use docker-registry secret
-
-Enable ACR Admin on the registry (ACR → **Access keys** → Admin user **On**), then:
+This step allows AKS to **pull images** from your private ACR without manual Docker login.
 
 ```bash
-# Create a namespace for isolation (optional)
-kubectl create namespace cloudnautic
-
-# Create image pull secret in that namespace
-kubectl create secret docker-registry acr-pull-secret \
-  --docker-server=atulkamble2.azurecr.io \
-  --docker-username=atulkamble2 \
-  --docker-password='<ACR_PASSWORD>' \
-  --docker-email='devnull@example.com' \
-  -n cloudnautic
+az aks update -g devops -n mycluster --attach-acr atulkamble2
 ```
 
-> Use **either** Option A **or** Option B (don’t mix). If you choose Option B, remember to add `imagePullSecrets` in your Deployment spec below.
+Confirm:
+
+```bash
+az aks show -g devops -n mycluster --query "servicePrincipalProfile"
+```
 
 ---
 
-## 3) Kubernetes Manifests
+## 🗂️ **7. Create Namespace**
 
-Create a folder (e.g., `k8s/`) and add these files.
+```bash
+kubectl create namespace cloudnautic
+```
 
-### `k8s/deployment.yaml`
+---
+
+## 📦 **8. Deploy Application from ACR**
+
+Make sure your Kubernetes YAML files reference your ACR image, e.g.:
+
+**`deployment.yaml`**
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hello-world
+  name: hello-web
   namespace: cloudnautic
-  labels:
-    app: hello-world
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: hello-world
+      app: hello-web
   template:
     metadata:
       labels:
-        app: hello-world
+        app: hello-web
     spec:
-      # If you used Option B (secret), uncomment imagePullSecrets:
-      # imagePullSecrets:
-      #   - name: acr-pull-secret
       containers:
-        - name: hello-world
-          image: atulkamble2.azurecr.io/cloudnautic/hello-world:v1
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 80
-          readinessProbe:
-            httpGet:
-              path: /
-              port: 80
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /
-              port: 80
-            initialDelaySeconds: 10
-            periodSeconds: 20
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "128Mi"
-            limits:
-              cpu: "250m"
-              memory: "256Mi"
+      - name: hello-web
+        image: atulkamble2.azurecr.io/cloudnautic/hello-world:latest
+        ports:
+        - containerPort: 80
 ```
 
-### `k8s/service.yaml`
+**`service.yaml`**
 
 ```yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: hello-world-svc
+  name: hello-web-svc
   namespace: cloudnautic
-  labels:
-    app: hello-world
 spec:
   type: LoadBalancer
   selector:
-    app: hello-world
+    app: hello-web
   ports:
-    - name: http
-      port: 80
-      targetPort: 80
+  - port: 80
+    targetPort: 80
 ```
 
-> ✅ Note the correct service type spelling: `LoadBalancer` (not “LoabBalancer”).
-
----
-
-## 4) Apply Manifests
+Apply both:
 
 ```bash
-# Create namespace (if not created via secret step)
-kubectl create namespace cloudnautic || true
-
-# Apply
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-
-# Watch rollout
-kubectl rollout status deployment/hello-world -n cloudnautic
-
-# Check resources
-kubectl get pods -n cloudnautic -o wide
-kubectl get svc  -n cloudnautic
+kubectl apply -f deployment.yaml
+kubectl apply -f service.yaml
 ```
-
-When the service shows an **EXTERNAL-IP**, open it in the browser to verify.
 
 ---
 
-## 5) Zero-downtime update (rollout a new image)
+## ✅ **9. Verify Deployment**
 
 ```bash
-# Build & push a new tag
-sudo docker build -t atulkamble2.azurecr.io/cloudnautic/hello-world:v2 .
-sudo docker push atulkamble2.azurecr.io/cloudnautic/hello-world:v2
+kubectl get pods -n cloudnautic
+kubectl get svc -n cloudnautic
+```
 
-# Update the deployment image
-kubectl set image deployment/hello-world hello-world=atulkamble2.azurecr.io/cloudnautic/hello-world:v2 -n cloudnautic
+Once the external IP appears under the service, open your app in a browser:
 
-# Monitor
-kubectl rollout status deployment/hello-world -n cloudnautic
-kubectl rollout history deployment/hello-world -n cloudnautic
-
-# Roll back if needed
-# kubectl rollout undo deployment/hello-world -n cloudnautic
+```
+http://<external-ip>
 ```
 
 ---
 
-## 6) Common Errors & Fixes
+## 🧹 **10. Cleanup Resources**
 
-* **`ImagePullBackOff` / `ErrImagePull`**
-
-  * If using **Option A**: confirm `az aks update --attach-acr $ACR` ran without errors; re-pull after a minute.
-  * If using **Option B**: ensure secret name matches and is in the **same namespace**; verify credentials; re-deploy.
-  * Confirm the **image tag** exists in ACR and matches your manifest.
-* **`Service type invalid`**
-
-  * Use `LoadBalancer` (case-sensitive).
-* **Probes failing**
-
-  * Ensure the container serves on `:80` and `/`. Adjust `path`/`port` accordingly.
-
-Quick checks:
+When done, delete all resources to avoid charges:
 
 ```bash
-kubectl describe pod <pod-name> -n cloudnautic
-kubectl logs <pod-name> -n cloudnautic
+az group delete --name devops --yes --no-wait
 ```
 
 ---
 
-## 7) (Optional) Ingress + DNS (Production-ish)
-
-If you don’t want a public LoadBalancer per service:
-
-1. Install NGINX Ingress Controller (AKS add-on or Helm).
-2. Expose a single public IP.
-3. Use an `Ingress` resource to route hostnames/paths to services.
-4. Point your DNS `A` record to the ingress public IP.
-
-(Ask me if you want a ready Helm + Ingress YAML for this app.)
-
----
-
-## 8) Cleanup
-
-```bash
-# App resources only
-kubectl delete -f k8s/service.yaml
-kubectl delete -f k8s/deployment.yaml
-kubectl delete namespace cloudnautic
-
-# Whole cluster (irreversible)
-az group delete -n $RG --yes --no-wait
-```
-
----
-
-## 📦 Folder Structure (suggested)
-
-```
-.
-├── ACR-Setup-and-Push.md
-├── AKS-Deploy.md
-└── k8s
-    ├── deployment.yaml
-    └── service.yaml
-```
-
----
-
-If you want, I can also add:
-
-* **Helm chart** for this app (values for image/tag/replicas)
-* **GitHub Actions** pipeline to build → push to ACR → deploy to AKS automatically (with OpenID Connect, no secrets)
-
+Would you like me to extend this guide into a **GitHub-ready README.md** (with emojis, table of contents, and diagram for CI/CD flow)?
+It would make a perfect documentation addition to your repo `docker-hello-world/k8s`.
